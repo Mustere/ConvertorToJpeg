@@ -1,24 +1,29 @@
-#include "heicconverter.h"
+#include "converter.h"
 #include <libheif/heif.h>
 #include <QImage>
 #include <QFile>
 #include <QDebug>
 
-bool HeicConverter::convertFile(const QString &inputFile, const QString &outputFile, int quality) {
+bool HeicConverter::convertFile(const QString &inputFile, const QString &outputFile, int quality)
+{
     qDebug() << "Starting conversion for:" << inputFile;
 
-    // --- Проверка заголовка ---
+    // --- Проверка заголовка файла ---
     QFile f(inputFile);
     if (!f.open(QIODevice::ReadOnly)) {
         qWarning() << "Cannot open file:" << inputFile;
         return false;
     }
+
     QByteArray header = f.peek(12);
     f.close();
 
-    // JPEG-файл (магическое число FFD8)
+    // ------------------------------------------------------------------
+    // JPEG (магическое число: FF D8 FF)
+    // ------------------------------------------------------------------
     if (header.startsWith("\xFF\xD8\xFF")) {
         qDebug() << "File is actually JPEG, fallback to QImage:" << inputFile;
+
         QImage img;
         if (!img.load(inputFile)) {
             qWarning() << "Failed to load JPEG with QImage:" << inputFile;
@@ -27,19 +32,41 @@ bool HeicConverter::convertFile(const QString &inputFile, const QString &outputF
         return img.save(outputFile, "JPEG", quality);
     }
 
-    // --- Обработка как HEIC ---
+    // ------------------------------------------------------------------
+    // WEBP (RIFF....WEBP)
+    // ------------------------------------------------------------------
+    if (header.startsWith("RIFF") && header.mid(8, 4) == "WEBP") {
+        qDebug() << "File is WEBP, converting via QImage:" << inputFile;
+
+        QImage img;
+        if (!img.load(inputFile)) {
+            qWarning() << "Failed to load WEBP with QImage:" << inputFile;
+            return false;
+        }
+        return img.save(outputFile, "JPEG", quality);
+    }
+
+    // ------------------------------------------------------------------
+    // HEIC / HEIF (через libheif)
+    // ------------------------------------------------------------------
     heif_context* ctx = heif_context_alloc();
     if (!ctx) {
         qWarning() << "Failed to allocate heif_context.";
         return false;
     }
 
-    heif_error err = heif_context_read_from_file(ctx, inputFile.toStdString().c_str(), nullptr);
+    heif_error err = heif_context_read_from_file(
+        ctx,
+        inputFile.toStdString().c_str(),
+        nullptr
+        );
+
     if (err.code != heif_error_code::heif_error_Ok) {
         qWarning() << "Cannot read HEIC file:" << inputFile << ", error:" << err.message;
         heif_context_free(ctx);
         return false;
     }
+
     qDebug() << "HEIC file read successfully.";
 
     heif_image_handle* handle = nullptr;
@@ -51,7 +78,14 @@ bool HeicConverter::convertFile(const QString &inputFile, const QString &outputF
     }
 
     heif_image* img = nullptr;
-    err = heif_decode_image(handle, &img, heif_colorspace_RGB, heif_chroma_interleaved_RGBA, nullptr);
+    err = heif_decode_image(
+        handle,
+        &img,
+        heif_colorspace_RGB,
+        heif_chroma_interleaved_RGBA,
+        nullptr
+        );
+
     if (err.code != heif_error_code::heif_error_Ok || !img) {
         qWarning() << "Cannot decode HEIC image to RGBA:" << inputFile << ", error:" << err.message;
         heif_image_handle_release(handle);
@@ -63,7 +97,12 @@ bool HeicConverter::convertFile(const QString &inputFile, const QString &outputF
     int h = heif_image_get_height(img, heif_channel_interleaved);
 
     int stride = 0;
-    const uint8_t* data = heif_image_get_plane_readonly(img, heif_channel_interleaved, &stride);
+    const uint8_t* data = heif_image_get_plane_readonly(
+        img,
+        heif_channel_interleaved,
+        &stride
+        );
+
     if (!data) {
         qWarning() << "Failed to get interleaved plane for:" << inputFile;
         heif_image_release(img);
@@ -74,8 +113,7 @@ bool HeicConverter::convertFile(const QString &inputFile, const QString &outputF
 
     QImage qimg(w, h, QImage::Format_RGBA8888);
     for (int y = 0; y < h; ++y) {
-        const uint8_t* row = data + y * stride;
-        memcpy(qimg.scanLine(y), row, w * 4);
+        memcpy(qimg.scanLine(y), data + y * stride, w * 4);
     }
 
     bool saved = qimg.save(outputFile, "JPEG", quality);

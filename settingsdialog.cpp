@@ -9,7 +9,7 @@
 SettingsDialog::SettingsDialog(int currentThreads, QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle("Настройки потоков");
+    setWindowTitle(tr("Stream Settings"));
 
     // Фиксируем размеры окна
     setFixedSize(300, 120); // ширина 300px, высота 120px
@@ -19,7 +19,7 @@ SettingsDialog::SettingsDialog(int currentThreads, QWidget *parent)
     // Информация о доступных ядрах
     infoLabel = new QLabel(this);
     int totalCores = QThread::idealThreadCount();
-    infoLabel->setText(QString("Доступно ядер: %1").arg(totalCores));
+    infoLabel->setText(QString(tr("Available cores: %1")).arg(totalCores));
     layout->addWidget(infoLabel);
 
     // SpinBox для выбора количества потоков
